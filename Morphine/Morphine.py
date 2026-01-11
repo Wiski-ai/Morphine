@@ -9,7 +9,7 @@ Features:
  - User-Agent rotation for HTTP fingerprinting
  - Passive DNS enumeration via crt.sh
  - HTTP fingerprint (headers, title, status)
- - Terminal "GUI" (curses) inspired by tools like wifite/airgeddon
+ - Terminal "GUI" 
  - Export results to JSON
 Notes:
  - This is an active scanner: you MUST have explicit authorization to test targets.
