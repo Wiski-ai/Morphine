@@ -63,4 +63,4 @@ Contributing / Improvements
 License
 - Provided as-is, responsible use only.
 - This tool is create By H8Laws
-
+- You can donate me on paypal h8l4ws@gmail.com
