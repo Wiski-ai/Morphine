@@ -525,7 +525,7 @@ def main_curses(stdscr):
     except Exception:
         pass
     ui = UI(stdscr)
-    ui.show_status("Bienvenue. Appuyez sur 'c' pour config, 'q' pour quitter, 's' pour démarrer scan.")
+    ui.show_status("Entrez un chiffre: 0=Quitter  9=Démarrer  (1..8 = éditer champs)")
     current_config = {
         "targets": "",
         "ports": DEFAULT_PORTS,
@@ -536,79 +536,123 @@ def main_curses(stdscr):
         "do_http": "y",
         "export": "morphine_results.json",
         "timeout": str(DEFAULT_TIMEOUT),
+        "passive_dns": "y",
     }
     results: Dict[str, ScanResult] = {}
     live_lines: List[str] = ["No scans yet."]
     ui.show_main(live_lines)
+
+    def menu_lines():
+        return [
+            "Menu (entrez le chiffre correspondant):",
+            f"1) Targets (comma)      : {current_config['targets'] or '<vide>'}",
+            f"2) Ports                : {current_config['ports']}",
+            f"3) Mode (1=syn 2=connect): {'syn' if current_config['mode']=='syn' else 'connect'}",
+            f"4) Min delay (sec)      : {current_config['min_delay']}",
+            f"5) Max delay (sec)      : {current_config['max_delay']}",
+            f"6) Workers (threads)    : {current_config['workers']}",
+            f"7) Do HTTP (1=yes 2=no) : {'oui' if current_config['do_http'].lower().startswith('y') else 'non'}",
+            f"8) Export filename      : {current_config['export']}",
+            f"9) Démarrer le scan",
+            "0) Quitter",
+            "",
+            "Après modification, appuyez sur 9 pour lancer."
+        ]
+
     while True:
-        c = stdscr.getch()
-        if c == ord('q'):
+        ui.show_main(menu_lines())
+        try:
+            c = stdscr.getch()
+        except Exception:
+            time.sleep(0.05)
+            continue
+        # Only digit-based controls (0-9)
+        if c == ord('0'):
             break
-        elif c == ord('c'):
-            # Config inputs
-            targets = ui.input_box("Targets (comma sep IP/host or domain). If domain, passive DNS can be used", current_config["targets"])
-            if not targets:
-                targets = current_config["targets"]
-            current_config["targets"] = targets
+        elif c == ord('1'):
+            targets = ui.input_box("Targets (comma sep IP/host/domain)", current_config["targets"])
+            if targets is not None:
+                current_config["targets"] = targets
+        elif c == ord('2'):
             ports = ui.input_box("Ports (e.g. 22,80,8000-8100)", current_config["ports"])
-            if ports:
+            if ports is not None:
                 current_config["ports"] = ports
-            mode = ui.input_box("Mode (syn/connect)", current_config["mode"])
-            if mode in ("syn", "connect"):
-                current_config["mode"] = mode
-            min_d = ui.input_box("Min delay seconds", current_config["min_delay"])
-            max_d = ui.input_box("Max delay seconds", current_config["max_delay"])
-            workers = ui.input_box("Parallel workers (threads)", current_config["workers"])
-            do_http = ui.input_box("Do HTTP fingerprint? (y/n)", current_config["do_http"])
+        elif c == ord('3'):
+            choice = ui.input_box("Mode: 1) syn  2) connect", "1" if current_config["mode"]=="syn" else "2")
+            if choice.strip() == "1":
+                current_config["mode"] = "syn"
+            elif choice.strip() == "2":
+                current_config["mode"] = "connect"
+        elif c == ord('4'):
+            val = ui.input_box("Min delay seconds (float)", current_config["min_delay"])
+            try:
+                float(val)
+                current_config["min_delay"] = val
+            except Exception:
+                current_config["min_delay"] = str(DEFAULT_MIN_DELAY)
+        elif c == ord('5'):
+            val = ui.input_box("Max delay seconds (float)", current_config["max_delay"])
+            try:
+                float(val)
+                current_config["max_delay"] = val
+            except Exception:
+                current_config["max_delay"] = str(DEFAULT_MAX_DELAY)
+        elif c == ord('6'):
+            val = ui.input_box("Parallel workers (threads, int)", current_config["workers"])
+            try:
+                int(val)
+                current_config["workers"] = val
+            except Exception:
+                current_config["workers"] = str(DEFAULT_WORKERS)
+        elif c == ord('7'):
+            choice = ui.input_box("Do HTTP fingerprint? 1) oui  2) non", "1" if current_config["do_http"].lower().startswith("y") else "2")
+            if choice.strip() == "1":
+                current_config["do_http"] = "y"
+            else:
+                current_config["do_http"] = "n"
+        elif c == ord('8'):
             export = ui.input_box("Export JSON filename", current_config["export"])
-            timeout = ui.input_box("Timeout seconds", current_config["timeout"])
-            # sanitize
-            current_config["min_delay"] = min_d
-            current_config["max_delay"] = max_d
-            current_config["workers"] = workers
-            current_config["do_http"] = do_http.lower()[:1]
-            current_config["export"] = export or current_config["export"]
-            current_config["timeout"] = timeout
-            ui.show_status("Configuration saved. Press 's' to start scan.")
-        elif c == ord('s'):
-            # Confirm authorization
-            confirm = ui.input_box("Do you have written authorization to test these targets? (yes/no)", "no")
-            if confirm.lower() not in ("yes", "y"):
-                ui.show_status("Authorization required. Aborting start.")
+            if export:
+                current_config["export"] = export
+        elif c == ord('9'):
+            # Confirm authorization (numeric)
+            auth = ui.input_box("Avez-vous autorisation écrite? 1) oui 2) non", "2")
+            if auth.strip() not in ("1","oui","y","YES","Yes"):
+                ui.show_status("Autorisation requise. Abandon.")
+                time.sleep(1.2)
                 continue
-            # Build target list: if a domain appears and user wants passive DNS, ask
             raw_targets = current_config["targets"]
             if not raw_targets:
-                ui.show_status("No targets configured. Press 'c' to configure.")
+                ui.show_status("Aucun target. Editez (1) pour ajouter.")
+                time.sleep(1.2)
                 continue
             tokens = [t.strip() for t in raw_targets.split(",") if t.strip()]
             final_targets: Set[str] = set()
+            # Ask once whether to perform passive DNS for domains
+            pd_choice = ui.input_box("Faire passive DNS pour les domaines? 1) oui 2) non", "1" if current_config.get("passive_dns","y").lower().startswith("y") else "2")
+            do_passive_dns_all = pd_choice.strip() == "1"
             for t in tokens:
-                if "." in t and not is_ip(t):
-                    # domain: ask if do passive DNS
-                    pd = ui.input_box(f"Passive DNS for domain {t}? (y/n)", "y")
-                    if pd.lower().startswith("y"):
-                        ui.show_status(f"Enumerating subdomains for {t}...")
-                        try:
-                            subs = passive_dns_crtsh(t)
-                            if subs:
-                                for s in subs:
-                                    final_targets.add(s)
-                                ui.show_status(f"crt.sh returned {len(subs)} hosts; added to target list.")
-                            else:
-                                ui.show_status(f"No entries found on crt.sh for {t}; adding domain itself.")
-                                final_targets.add(t)
-                        except Exception as e:
-                            ui.show_status(f"crt.sh error: {e}; adding {t} as-is")
+                if "." in t and not is_ip(t) and do_passive_dns_all:
+                    ui.show_status(f"Enum {t} via crt.sh ...")
+                    try:
+                        subs = passive_dns_crtsh(t)
+                        if subs:
+                            for s in subs:
+                                final_targets.add(s)
+                            # quick status update
+                            ui.show_status(f"crt.sh: {len(subs)} hôtes ajoutés pour {t}")
+                        else:
                             final_targets.add(t)
-                    else:
+                    except Exception as e:
+                        ui.show_status(f"crt.sh erreur: {e}; ajout de {t}")
                         final_targets.add(t)
                 else:
                     final_targets.add(t)
             # parse ports
             ports = parse_ports(current_config["ports"])
             if not ports:
-                ui.show_status("No valid ports parsed.")
+                ui.show_status("Aucun port valide.")
+                time.sleep(1.2)
                 continue
             # parse numeric values
             try:
@@ -625,8 +669,11 @@ def main_curses(stdscr):
                 workers = DEFAULT_WORKERS
             do_http = current_config["do_http"].lower().startswith("y")
             mode = current_config["mode"]
-            timeout = float(current_config.get("timeout") or DEFAULT_TIMEOUT)
-            ui.show_status(f"Starting scan on {len(final_targets)} targets, {len(ports)} ports each. Mode={mode}")
+            try:
+                timeout = float(current_config.get("timeout") or DEFAULT_TIMEOUT)
+            except Exception:
+                timeout = DEFAULT_TIMEOUT
+            ui.show_status(f"Démarrage: {len(final_targets)} cibles, {len(ports)} ports, mode={mode}")
             # live update callback
             live_state_lock = threading.Lock()
             live_state: Dict[str, Dict[int, str]] = {}
@@ -643,12 +690,14 @@ def main_curses(stdscr):
             # run scan
             try:
                 results = start_scan_targets(list(final_targets), ports, mode, min_delay, max_delay, workers, do_http, timeout, ui_update_cb=ui_update)
-                ui.show_status("Scan completed. Preparing output...")
+                ui.show_status("Scan terminé. Préparation sortie...")
             except KeyboardInterrupt:
-                ui.show_status("Scan interrupted by user.")
+                ui.show_status("Scan interrompu.")
+                time.sleep(1.2)
                 continue
             except Exception as e:
-                ui.show_status(f"Fatal error: {e}")
+                ui.show_status(f"Erreur fatale: {e}")
+                time.sleep(1.2)
                 continue
             # finalize UI output
             lines = pretty_lines_from_results(results)
@@ -657,9 +706,11 @@ def main_curses(stdscr):
             filename = current_config["export"]
             try:
                 save_json(results, filename)
-                ui.show_status(f"Results saved to {filename}")
+                ui.show_status(f"Résultats sauvés dans {filename}")
             except Exception as e:
-                ui.show_status(f"Failed to save results: {e}")
+                ui.show_status(f"Échec sauvegarde: {e}")
+            # pause so user can see status
+            time.sleep(1.2)
         else:
             time.sleep(0.05)
 
