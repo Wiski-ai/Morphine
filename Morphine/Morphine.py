@@ -797,3 +797,4 @@ if __name__ == "__main__":
         logger.error("Fatal UI error: %s", e)
         traceback.print_exc()
         sys.exit(1)
+        
