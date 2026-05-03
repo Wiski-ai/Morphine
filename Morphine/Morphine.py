@@ -253,12 +253,17 @@ def syn_scan_scapy(host: str, port: int, timeout: float = 3.0) -> str:
     try:
         resp = sr1(pkt, timeout=timeout)
         if resp is None:
-            return "open|filtered"
+            return "filtered"
         if resp.haslayer(TCP):
             flags = resp.getlayer(TCP).flags
             # SYN+ACK => open
             # flags may be an int-like value
-            if int(flags) & 0x12:  # SYN+ACK
+            try:
+                flags_int = int(flags)
+            except (ValueError, TypeError):
+                flags_int = 0
+            
+            if flags_int & 0x12:  # SYN+ACK
                 # send RST to gracefully close (use send to avoid waiting)
                 try:
                     send(IP(dst=host)/TCP(dport=port, flags="R"), verbose=False)
@@ -266,7 +271,7 @@ def syn_scan_scapy(host: str, port: int, timeout: float = 3.0) -> str:
                     pass
                 return "open"
             # RST => closed
-            if int(flags) & 0x14:  # RST+ACK
+            if flags_int & 0x14:  # RST+ACK
                 return "closed"
         return "filtered"
     except PermissionError:
@@ -308,6 +313,14 @@ def is_ip(addr: str) -> bool:
         ipaddress.ip_address(addr)
         return True
     except Exception:
+        return False
+
+def is_root() -> bool:
+    """Check if running as root (Unix/Linux only)."""
+    try:
+        return os.geteuid() == 0
+    except AttributeError:
+        # Windows doesn't have geteuid
         return False
 
 # Splash / ASCII art helpers
@@ -419,7 +432,10 @@ class UI:
             curses.noecho()
             if not s:
                 return default
-            return s.decode('utf-8').strip()
+            try:
+                return s.decode('utf-8').strip()
+            except (UnicodeDecodeError, AttributeError):
+                return default
         except Exception:
             curses.noecho()
             return default
@@ -432,7 +448,7 @@ def scan_worker(host: str, port: int, mode: str, min_delay: float, max_delay: fl
     time.sleep(delay)
     status = "unknown"
     try:
-        if mode == "syn" and SCAPY_AVAILABLE and os.geteuid() == 0:
+        if mode == "syn" and SCAPY_AVAILABLE and is_root():
             try:
                 status = syn_scan_scapy(host, port, timeout=min(timeout, 4.0))
             except PermissionError:
@@ -797,4 +813,3 @@ if __name__ == "__main__":
         logger.error("Fatal UI error: %s", e)
         traceback.print_exc()
         sys.exit(1)
-        
